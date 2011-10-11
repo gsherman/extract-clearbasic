@@ -1,0 +1,434 @@
+Option Explicit
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Extract Baseline or CustomerDefined code?
+'
+'		Baseline:          IsCustomerDefined = 0
+'		Customer-Defined:  IsCustomerDefined = 1
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Const IsCustomerDefined = 1
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Use Resource Config or not?
+'		If the ResourceConfig constant is set to empty string, 
+'			then all clearbasic will be extracted
+'		If the ResourceConfig constant is set to the name of a resource config,
+'			then only clearbasic for that resource config will be extracted.
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Const ResourceConfig = ""
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Constants
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Const SINGLE_QUOTE = "'"
+Const COMMA = ","
+Const UNDERSCORE = "_"
+Const COMMENT_CHARACTER = "'"
+Const CBI_FILENAME = "code.cbi"
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Globals
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Dim CBI_FILE_NUMBER as Integer
+Global ResourceConfigObjid as Long
+Global CodeDirectoryBase as String
+Global CodeDirectory as String 
+Global bUseResourceConfig as Boolean
+
+Sub SetResourceConfigObjid	
+	Dim rcList as List
+	Dim br as New BulkRetrieve
+	Dim rc as Record
+
+	br.SimpleQuery 0, "rc_config"
+	br.AppendFilter 0, "name", cbEqual, ResourceConfig
+	br.RetrieveRecords
+
+	Set rcList = br.GetRecordList(0)
+	If rcList.Count = 0 Then
+		Err.Raise -2,,"Unable to find resource config named: " + ResourceConfig
+	End If
+	Set rc = rcList.ItemByIndex(0)
+	
+	ResourceConfigObjid = rc.GetField("objid")
+	
+End Sub
+
+Sub InitializeGlobals()
+	If IsCustomerDefined Then
+		CodeDirectoryBase = "ClearBasic"
+	Else
+		CodeDirectoryBase = "ClearBasic.Baseline"	
+	End If
+	
+	CodeDirectory = CodeDirectoryBase
+	bUseResourceConfig = False
+	
+	If Len(ResourceConfig) > 0 Then
+		Call SetResourceConfigObjid	
+		bUseResourceConfig = True
+	 	CodeDirectory = CodeDirectory + "." + ResourceConfig
+	End If
+
+End Sub
+
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Parse a string into a list of words
+'   Will use any delimiter passed in 'str_delim' as a delimiter
+'   consecutive delimiters are treated as one
+'   returns a list of strings in the lst_words parameter
+'
+'   Return Values:   0      success
+'                   -1      empty string
+'
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Function parse_string(str_input as String, str_delim as String, _
+     int_count as Integer, lst_words as List) as Integer
+
+	Dim int_itemCnt as Integer 
+	Dim str_word as String
+	Dim i as Integer
+	
+	int_count = 0
+	str_input = Trim$(str_input)
+	int_itemCnt = ItemCount(str_input, str_delim)
+	If Len(str_input) = 0 Then
+	    parse_string  = -1
+	Else
+	    parse_string = 0
+	End If
+	
+	For i = 1 to int_itemCnt
+	    str_word = Trim$(Item$(str_input, i, i, str_delim))
+	    lst_words.AppendItem str_word
+	    int_count = int_count + 1
+	Next i
+
+End Function
+
+Function TrimLeadingTrailingQuotes(formVersion as String) as String
+	If Left$(formVersion,1) = SINGLE_QUOTE Then
+		formVersion = Right$(formVersion, len(formVersion) - 1)
+	End If
+	If Right$(formVersion,1) = SINGLE_QUOTE Then
+		formVersion = Left$(formVersion, len(formVersion) - 1)
+	End If   
+	TrimLeadingTrailingQuotes = formVersion
+End Function
+
+Function DirectoryExists (directoryName as String) as Boolean
+	Dim returnString as String
+	returnString = Dir$(directoryName, ebDirectory)
+	On Error Goto 0                                         
+	If returnString <> "" Then
+	    DirectoryExists = True
+	Else 
+	    DirectoryExists = False
+	End If
+End Function
+
+
+
+Public Function ReplaceCharacters(in_str As String, characterToBeReplaced as String, replacementCharacter as String ) As String
+  Dim t_int   As Integer                ' Looping integer
+  Dim out_str As String                 ' Output string  
+  
+                                        ' Loop through the string. For each
+                                        '  character, if it is a string, change
+                                        '  it. Else, leave 
+                                        '  it along
+  For t_int = 1 To Len(in_str)
+    If Mid$(in_str, t_int, 1) <> characterToBeReplaced Then
+       out_str = out_str & Mid$(in_str, t_int, 1)
+    Else
+       out_str = out_str & replacementCharacter
+    End If
+  Next t_int
+  
+                                        ' Return the string
+  ReplaceCharacters = out_str
+End Function
+
+Public Function ReplaceSpecialCharacters(in_str as String) as String
+	in_str = ReplaceCharacters(in_str, Space$(1), "_")
+	in_str = ReplaceCharacters(in_str, "/", "_")	
+	ReplaceSpecialCharacters = in_str	 
+End Function
+
+Sub Clean()
+	Dim ClearBasicCodeFiles as String
+	If Not DirectoryExists(CodeDirectory) Then
+		MkDir CodeDirectory 
+	End If
+
+	ClearBasicCodeFiles = CodeDirectory + Basic.PathSeparator$ + "*.cbs"
+	If Len(Dir$(ClearBasicCodeFiles)) > 0 Then
+		Kill ClearBasicCodeFiles
+	End If
+
+	ClearBasicCodeFiles = CodeDirectory + Basic.PathSeparator$ + "*.cbi"
+	If Len(Dir$(ClearBasicCodeFiles)) > 0 Then
+		Kill ClearBasicCodeFiles
+	End If
+	
+End Sub
+
+Sub DeleteFileIfExists(fileName as String)
+		  If FileExists(fileName) Then
+				Kill fileName
+			End If
+End Sub
+
+Sub WriteComment (comment as String, fileNumber as Integer)
+	Print # fileNumber, COMMENT_CHARACTER + Space$(1) + comment
+End Sub
+
+Sub WriteCodeChunksToFile(byRef sourceList as List, fileNumber as Integer)
+	Dim i as Integer
+	Dim sourceRecord as Record
+
+	For i = 0 to sourceList.Count - 1
+		Set sourceRecord = sourceList.ItemByIndex(i)
+		' Note the semicolon at the end of the Print statement.
+		' This means that the next expression is output immediately 
+		' after the current expression without a carriage return.
+  	Print # fileNumber, sourceRecord.GetField("code_chunk");		  	
+  Next i
+End Sub
+
+Function FormExistsInResourceConfig(formId as String,formCustomerVersion as String) 
+	FormExistsInResourceConfig = False
+
+	Dim rcFormList as List
+	Dim br as New BulkRetrieve
+
+	br.SimpleQuery 0, "win_head"
+	br.AppendFilter 0, "dlg_id", cbEqual, formId
+	br.AppendFilter 0, "objid", cbEqual, ResourceConfigObjid
+	br.AppendFilter 0, "ver_customer", cbEqual, formCustomerVersion
+	br.RetrieveRecords
+
+	Set rcFormList = br.GetRecordList(0)
+	If rcFormList.Count > 0 Then
+		FormExistsInResourceConfig = True
+	End If
+	
+End Function
+		  			
+Sub ExtractFormCode()
+	Dim br as New BulkRetrieve
+	Dim behaviorList as List
+	Dim i as Integer, behaviorCounter as Integer
+  Dim formVersion as String
+	Dim behaviorRecord as Record
+	Dim numberOfWords as Integer
+	Dim listOfWords as New List
+  Dim formId as String
+	Dim sourceList as List
+	Dim sourceRecord as Record
+  Dim fileName as String
+	Dim moduleName as String
+	Dim result as Integer
+	Dim fileNumber as Integer
+	fileNumber = FreeFile
+	Dim filePathAndName as String
+	Dim formCustomerVersion as String
+									  		  	
+	br.SimpleQuery 0, "behavior"
+	br.AppendFilter 0, "cust_ind", cbEqual, IsCustomerDefined
+	br.AppendFilter 0, "module_name", cbLike, "263%"
+	br.TraverseFromParent 1, "behavior2source", 0
+	br.AppendSort 1, "sequence_num", cbAscending	
+	br.RetrieveRecords
+			
+	Set behaviorList = br.GetRecordList(0)
+	Debug.Print "Found " & CStr(behaviorList.Count) & " code modules for forms."
+
+	For behaviorCounter = 0 to  behaviorList.Count - 1	
+			Set behaviorRecord = behaviorList.ItemByIndex(behaviorCounter)
+			moduleName = behaviorRecord.GetField("module_name")
+
+			Set listOfWords = new List
+			result = parse_string(moduleName,COMMA, numberOfWords, listOfWords)
+
+			formId = listOfWords.ItemByIndex(1)
+					  
+			If listOfWords.Count = 2 Then 
+						'baseline
+					  formVersion = "baseline"
+					  formCustomerVersion = ""
+			Else 
+						'customer-defined
+					  formVersion = listOfWords.ItemByIndex(3)
+					  formVersion = TrimLeadingTrailingQuotes(formVersion)		
+					  formCustomerVersion = formVersion
+			End If
+		
+
+			fileName = formId + UNDERSCORE + formVersion + ".cbs"			 
+		 	fileName = ReplaceSpecialCharacters(fileName)		  
+		  
+		  'If we have a resource config, then a filename of simply <formID>.cbs will be unique
+		  'within the directory. This is also how the Clarify2DTS_Estimator tool expects it.
+		  If bUseResourceConfig Then
+		  	fileName = formId + ".cbs"		
+		  End If
+		  
+		  filePathAndName = CodeDirectory + Basic.PathSeparator$ + fileName
+
+			If bUseResourceConfig Then
+			  If FormExistsInResourceConfig(formId,formCustomerVersion) = False Then
+			  	Debug.Print "Skipping form " + cstr(formId) + " with customer version " + formVersion + " as it does not belong to resource config " + ResourceConfig
+			  	Goto NextForm
+			  End If
+		  End If
+
+			If IsCustomerDefined Then
+				Debug.Print "Extracting code for form " + cstr(formId) + " with customer version " + formVersion
+		  Else
+				Debug.Print "Extracting baseline code for form " + cstr(formId) 
+		  End If
+		  		  		  
+		  Open filePathAndName For Output As # fileNumber	
+		  	   
+			WriteComment "ClearBasic code module", fileNumber	
+			WriteComment "Module Name: " + moduleName, fileNumber	
+			WriteComment "Form ID: " + formId, fileNumber	
+			WriteComment "Customer Version: " + formVersion, fileNumber	
+		
+			Set sourceList = br.GetRelatedRecordList(behaviorRecord,"behavior2source")
+			WriteComment "Number of code chunks: " + CStr(sourceList.Count), fileNumber	
+			WriteCodeChunksToFile sourceList, fileNumber
+
+			Close fileNumber
+			
+			Print # CBI_FILE_NUMBER, Space$(1) + fileName + Space$(1) + "-F" + Space$(1) + formId + Space$(1) + formVersion
+
+NextForm:
+			
+	Next behaviorCounter
+	
+End Sub
+
+
+Sub ExtractGlobalCode()
+	Dim br as New BulkRetrieve
+	Dim behaviorList as List
+	Dim i as Integer, behaviorCounter as Integer
+	Dim globalsList as List
+	Dim result as Integer
+	Dim behaviorRecord as Record
+	Dim numberOfWords as Integer
+	Dim listOfWords as New List
+	Dim sourceList as List
+	Dim sourceRecord as Record
+  Dim fileName as String
+	Dim moduleName as String
+	Dim userLabel as String
+	Dim globalsName as String
+	Dim fileNumber as Integer
+	fileNumber = FreeFile
+	Dim filePathAndName as String
+		
+	br.SimpleQuery 0, "behavior"
+	br.AppendFilter 0, "cust_ind", cbEqual, IsCustomerDefined 
+	br.AppendFilter 0, "module_name", cbLike, "83%"
+	br.TraverseFromParent 1, "behavior2source", 0
+	br.AppendSort 1, "sequence_num", cbAscending	
+	br.RetrieveRecords
+		
+	Set behaviorList = br.GetRecordList(0)
+	Debug.Print "Found " & CStr(behaviorList.Count) & " global code modules."
+	
+	WriteComment Space$(1), CBI_FILE_NUMBER
+	
+	For behaviorCounter = 0 to  behaviorList.Count - 1	
+			Set behaviorRecord = behaviorList.ItemByIndex(behaviorCounter)
+			moduleName = behaviorRecord.GetField("module_name")
+			userLabel =  Trim$(behaviorRecord.GetField("user_label"))
+			globalsName = ""
+		  Debug.Print "Extracting global code " + moduleName + " : " + userLabel
+		  						
+			Set listOfWords = new List
+			result = parse_string(moduleName,COMMA, numberOfWords, listOfWords)
+			
+			if numberOfWords = 5 Then
+				globalsName = listOfWords.ItemByIndex(3)
+			  globalsName = TrimLeadingTrailingQuotes(globalsName)
+			End If
+
+			If Len(userLabel) > 0 Then
+				globalsName = globalsName + "_" + userLabel
+			End If
+			
+			If globalsName = "" Then
+				globalsName = "globals" + UNDERSCORE + CStr(behaviorCounter)
+			End If
+
+			fileName =  globalsName + ".cbs"
+		 	fileName = ReplaceSpecialCharacters(fileName)		
+		 	
+		  filePathAndName = CodeDirectory + Basic.PathSeparator$ + fileName
+		  			
+		  If FileExists(filePathAndName) Then
+		  	fileName = globalsName + UNDERSCORE + "EXTRACTED" + UNDERSCORE + CStr(behaviorCounter) + ".cbs"
+		  	filePathAndName = CodeDirectory + Basic.PathSeparator$ + fileName
+		  End If
+		  	
+		  Open filePathAndName For Output As # fileNumber
+		  WriteComment "ClearBasic Globals code module", fileNumber
+		  WriteComment "Module Name: " + moduleName, fileNumber
+		  WriteComment "Globals Name: " + globalsName, fileNumber		  		  		  		  		 
+		
+			Set sourceList = br.GetRelatedRecordList(behaviorRecord,"behavior2source")
+			WriteComment "Number of code chunks: " + CStr(sourceList.Count), fileNumber
+			WriteCodeChunksToFile sourceList, fileNumber
+		  	
+			Close fileNumber
+			
+			If Len(userLabel) > 0 Then
+				Print # CBI_FILE_NUMBER, Space$(1) + fileName + " -G clarify -N " + userLabel
+			Else
+				Print # CBI_FILE_NUMBER, Space$(1) + fileName + " -G clarify " + globalsName	
+			End If
+									
+	Next behaviorCounter
+End Sub
+
+Sub StartCbiFile()
+	CBI_FILE_NUMBER = FreeFile
+	Open CodeDirectory + Basic.PathSeparator$ + CBI_FILENAME For Output As # CBI_FILE_NUMBER
+	
+	WriteComment "ClearBasic Directive File", CBI_FILE_NUMBER
+	WriteComment "Dynamically Built from Database: " + App.DatabaseName, CBI_FILE_NUMBER
+	WriteComment Space$(1), CBI_FILE_NUMBER
+End Sub
+
+Sub EndCbiFile()
+	Close CBI_FILE_NUMBER
+End Sub
+
+Sub DisplayGlobalInfo()
+	If IsCustomerDefined Then 
+		Debug.Print "Extracting Customer-Defined ClearBasic code"
+	Else
+		Debug.Print "Extracting Baseline ClearBasic code"	
+	End If	
+
+	If bUseResourceConfig Then Debug.Print "Extracting ClearBasic code for Resource Config: " + ResourceConfig	
+End Sub
+
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+'   Main
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Sub Main()
+	Call InitializeGlobals
+	Call DisplayGlobalInfo
+	Call Clean
+	Call StartCbiFile					  		 
+	Call ExtractFormCode	
+	Call ExtractGlobalCode
+	Call EndCbiFile	
+End Sub

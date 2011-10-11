@@ -1,0 +1,33 @@
+This script extracts ClearBasic code from a Clarify database.
+It extracts from code as well as global code modules.
+It also builds a CBI file (clearbasic directives file for use with cbex)
+
+For customer-defined code, it creates a new directory, "ClearBasic", and creates all files in this directory.
+For baseline code, it creates a new directory, "ClearBasic.Baseline", and creates all files in this directory.
+
+Files:
+	extract_cb.cbs: Main routine 
+	extract_cb.bat: Wraps the call to cbbatch; includes path to cbbatch executable 
+	clarify.env: contains database connectiion information
+
+Configuration:
+	
+	1. Verify (and modify for your environment) the database connection information in clarify.env
+	
+	2. Verify (and modify for your environment) the path to cbbatch.exe defined in extract_cb.bat
+
+	3. Extract all ClearBasic code or just code for one resource config?
+			By default, all ClearBasic code will be extracted.
+			If you wish to only extract ClearBasic code for a certain resource config,
+			then set the ResourceConfig constant within extract_cb.cbs to be the
+			name of the resource config. 
+			If the ResourceConfig constant is set to empty string, then all clearbasic will be extracted
+
+	4. Extract baseline ClearBasic code or customer-defined code?
+			By default, customer-defined ClearBasic code will be extracted.
+			If you wish to extract baseline ClearBasic code,
+			then set the IsCustomerDefined constant within extract_cb.cbs to be 0
+			
+To execute from a command line:
+	Windows (DOS): 	extract_cb.bat
+
