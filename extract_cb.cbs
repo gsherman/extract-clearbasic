@@ -35,6 +35,7 @@ Global ResourceConfigObjid as Long
 Global CodeDirectoryBase as String
 Global CodeDirectory as String 
 Global bUseResourceConfig as Boolean
+Global warningsList as List
 
 Sub SetResourceConfigObjid	
 	Dim rcList as List
@@ -71,6 +72,7 @@ Sub InitializeGlobals()
 	 	CodeDirectory = CodeDirectory + "." + ResourceConfig
 	End If
 
+	Set warningsList = New List 	
 End Sub
 
 
@@ -216,6 +218,13 @@ Function FormExistsInResourceConfig(formId as String,formCustomerVersion as Stri
 	End If
 	
 End Function
+
+Sub Warn(warningMessage as String)
+	Debug.Print
+	Debug.Print "WARNING: " & warningMessage
+	Debug.Print
+	warningsList.AppendItem warningMessage
+End Sub
 		  			
 Sub ExtractFormCode()
 	Dim br as New BulkRetrieve
@@ -235,7 +244,7 @@ Sub ExtractFormCode()
 	fileNumber = FreeFile
 	Dim filePathAndName as String
 	Dim formCustomerVersion as String
-									  		  	
+								  		  	
 	br.SimpleQuery 0, "behavior"
 	br.AppendFilter 0, "cust_ind", cbEqual, IsCustomerDefined
 	br.AppendFilter 0, "module_name", cbLike, "263%"
@@ -252,6 +261,11 @@ Sub ExtractFormCode()
 
 			Set listOfWords = new List
 			result = parse_string(moduleName,COMMA, numberOfWords, listOfWords)
+
+			If listOfWords.Count < 2 Then 
+				Warn("Found invalid behavior.module_name of '" & moduleName & "'. Skipping this module.")
+				Goto NextForm
+			End If
 
 			formId = listOfWords.ItemByIndex(1)
 					  
@@ -420,15 +434,37 @@ Sub DisplayGlobalInfo()
 	If bUseResourceConfig Then Debug.Print "Extracting ClearBasic code for Resource Config: " + ResourceConfig	
 End Sub
 
+Sub DisplayWarnings()
+	If warningsList.Count = 0 Then Exit Sub
+	Debug.Print
+	Debug.Print CStr(warningsList.Count) & " warnings were generated during processing:"
+	Dim i as Integer
+	For i = 0 to warningsList.Count - 1
+		Debug.Print Space$(5) & warningsList.ItemByIndex(i)
+	Next i
+	Debug.Print
+End Sub
+
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 '   Main
 '''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 Sub Main()
+On Error Goto ErrorHandler
 	Call InitializeGlobals
 	Call DisplayGlobalInfo
 	Call Clean
 	Call StartCbiFile					  		 
 	Call ExtractFormCode	
 	Call ExtractGlobalCode
-	Call EndCbiFile	
+	Call EndCbiFile
+	Call DisplayWarnings	
+	Exit Sub
+
+ErrorHandler: 
+    Debug.Print "ERROR" 
+    Debug.Print "Source: " &  Err.Source 
+    Debug.Print "Line Number: " & Erl 
+    Debug.Print "Error Number: " & Err.Number 
+    Debug.Print "Description: " & Err.Description
+	
 End Sub
